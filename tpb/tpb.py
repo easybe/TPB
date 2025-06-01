@@ -48,7 +48,6 @@ class List(object):
     objects to iterate over. Includes a resource path parser.
     """
 
-    _meta = re.compile('Uploaded (.*), Size (.*), ULed by (.*)')
     base_path = ''
 
     def items(self):
@@ -75,7 +74,11 @@ class List(object):
         if table is None:  # no table means no results:
             return []
         else:
-            return table.findall('.//tr')[1:]  # get all rows but header
+            rows = table.findall('.//tr')[1:]  # get all rows but header
+            if len(rows) and len(rows[-1].findall('.//td')) == 1:
+                # Remove pagination row
+                rows = rows[:-1]
+            return rows
 
     def _build_torrent(self, row):
         """
@@ -85,19 +88,14 @@ class List(object):
         cols = row.findall('.//td')  # split the row into it's columns
 
         # this column contains the categories
-        [category, sub_category] = [c.text for c in cols[0].findall('.//a')]
+        [category, sub_category] = [c.strip() for c in cols[0].findall('.//a')[0].text.split('>')]
 
         # this column with all important info
-        links = cols[1].findall('.//a')  # get 4 a tags from this columns
-        title = unicode(links[0].text)
-        url = self.url.build().path(links[0].get('href'))
-        magnet_link = links[1].get('href')  # the magnet download link
-        try:
-            torrent_link = links[2].get('href')  # the torrent download link
-            if not torrent_link.endswith('.torrent'):
-                torrent_link = None
-        except IndexError:
-            torrent_link = None
+        link = cols[1].findall('.//a')[0]
+        title = unicode(link.text)
+        url = self.url.build().path(link.get('href'))
+        links = cols[3].findall('.//a')
+        magnet_link = links[0].get('href')  # the magnet download link
         comments = 0
         has_cover = 'No'
         images = cols[1].findall('.//img')
@@ -110,20 +108,22 @@ class List(object):
             if "cover" in image_title:
                 has_cover = 'Yes'
         user_status = "MEMBER"
-        if links[-2].get('href').startswith("/user/"):
-            user_status = links[-2].find('.//img').get('title')
-        meta_col = cols[1].find('.//font').text_content()  # don't need user
-        match = self._meta.match(meta_col)
-        created = match.groups()[0].replace('\xa0', ' ')
-        size = match.groups()[1].replace('\xa0', ' ')
-        user = match.groups()[2]  # uploaded by user
+        if "/user/" in links[-1].get('href'):
+            user_status = links[-1].find('.//img').get('title')
+        created = cols[2].text
+        size = cols[4].text
+        user = None
+        try:
+            user = cols[7].findall('.//a')[0].text  # uploaded by user
+        except IndexError:
+            pass
 
         # last 2 columns for seeders and leechers
-        seeders = int(cols[2].text)
-        leechers = int(cols[3].text)
-        t = Torrent(title, url, category, sub_category, magnet_link,
-                    torrent_link, comments, has_cover, user_status, created,
-                    size, user, seeders, leechers)
+        seeders = int(cols[5].text)
+        leechers = int(cols[6].text)
+        t = Torrent(title, url, category, sub_category, magnet_link, comments,
+                    has_cover, user_status, created, size, user, seeders,
+                    leechers)
         return t
 
 
@@ -319,15 +319,14 @@ class Torrent(object):
     """
 
     def __init__(self, title, url, category, sub_category, magnet_link,
-                 torrent_link, comments, has_cover, user_status, created,
-                 size, user, seeders, leechers):
+                 comments, has_cover, user_status, created, size, user,
+                 seeders, leechers):
         self.title = title  # the title of the torrent
         self.url = url  # TPB url for the torrent
         self.id = self.url.path_segments()[1]
         self.category = category  # the main category
         self.sub_category = sub_category  # the sub category
         self.magnet_link = magnet_link  # magnet download link
-        self.torrent_link = torrent_link  # .torrent download link
         self.comments = comments
         self.has_cover = has_cover
         self.user_status = user_status
@@ -397,7 +396,6 @@ class Torrent(object):
         print('Category: %s' % self.category)
         print('Sub-Category: %s' % self.sub_category)
         print('Magnet Link: %s' % self.magnet_link)
-        print('Torrent Link: %s' % self.torrent_link)
         print('Uploaded: %s' % self.created)
         print('Comments: %d' % self.comments)
         print('Has Cover Image: %s' % self.has_cover)
